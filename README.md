@@ -1,18 +1,25 @@
+Developed with Python 3.11.9
+
 # Quickstart
 
-Developed on Python 3.11.9
+## 1. Clone Repo
+```
+git clone https://github.com/ricardo3ipunt/wp-link-checker.git
+```
 
-1. Create Python Virtual Environment(Venv)
+## 2. Create Python Virtual Environment(Venv)
 ```
 python -m venv venv
 ```
 
-2. Activate Venv
+## 3. Activate Venv
+* Windows (Powershell)
 ```
-# Windows (Powershell)
 .\venv\Scripts\activate.ps1
+```
 
-# Linux
+* Linux
+```
 source venv/Scripts/activate
 ```
 https://docs.python.org/3/library/venv.html#how-venvs-work
@@ -48,8 +55,13 @@ https://docs.python.org/3/library/venv.html#how-venvs-work
 </table>
 
 
-3. Install PIP packages
+## 4. Install PIP packages
 
 ```
 pip install -r requirements.txt
+```
+
+## 5. Execute script
+```
+python wp-link-checker.py
 ```
