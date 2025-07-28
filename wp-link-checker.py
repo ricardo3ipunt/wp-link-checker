@@ -1,3 +1,4 @@
+import http
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -8,8 +9,8 @@ from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configuration
-BASE_URL = ""
-SITEMAP_URL = f"{BASE_URL}/wp-sitemap.xml"
+WP_URL = ""
+SITEMAP_URL = f"{WP_URL}/wp-sitemap.xml"
 
 
 def get_urls_from_sitemap(sitemap_url):
@@ -51,11 +52,13 @@ def check_image_status(img_url):
             img_url, timeout=5, allow_redirects=False, verify=False
         )
         status_code = response.status_code
-
-        if status_code != 200 and status_code != 301:
-            return "BROKEN", f"{status_code}"
+        
+        if status_code == 200:
+            return "OK", f"{status_code}"
+        elif status_code == 301:
+            return "PROBABLY_OK", f"{status_code}"
         else:
-            return "OK", ""
+            return "BROKEN", f"{status_code}"
 
     except requests.RequestException:
         return "BROKEN", "Connection failed"
@@ -80,22 +83,20 @@ def check_images_on_page(page_url):
             img_url = urljoin(page_url, img_src)
             img_alt = img_tag.get("alt", "No alt text")
 
-            status, error_msg = check_image_status(img_url)
+            status, http_code = check_image_status(img_url)
 
-            if status == "BROKEN":
-                print(f"   -> ❌ Broken: {img_url} (Error: {error_msg})")
+            if status == "BROKEN" or status == "PROBABLY_OK":
+                if status == "BROKEN":
+                    print(f"   -> ❌ Broken: {img_url} (Error: {http_code})")
+                else:
+                    print(f"   -> Probably OK (Manual check required): {img_url} (Error: {http_code})")
                 results.append(
                     {
                         "page_url": page_url,
                         "image_url": img_url,
                         "image_alt": img_alt,
                         "status": status,
-                        "http_code": "N/A"
-                        if "Connection failed" in error_msg
-                        else error_msg
-                        if error_msg
-                        else "200",
-                        "error": error_msg,
+                        "http_code": http_code,
                         "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 )
@@ -109,7 +110,6 @@ def check_images_on_page(page_url):
                 "image_alt": "N/A",
                 "status": "PAGE_ERROR",
                 "http_code": "N/A",
-                "error": str(e),
                 "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
         )
@@ -129,7 +129,6 @@ def save_to_csv(all_results, filename, write_header=True):
         "image_alt",
         "status",
         "http_code",
-        "error",
         "scan_date",
     ]
 
