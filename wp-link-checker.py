@@ -1,4 +1,3 @@
-import http
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -20,10 +19,10 @@ def get_urls_from_sitemap(sitemap_url):
         r = requests.get(sitemap_url, timeout=10, verify=False)
         r.raise_for_status()
         sp = BeautifulSoup(r.text, "xml")
-        
+
         # Check if it's a sitemap
         sitemap_elements = sp.find_all("sitemap")
-        
+
         if sitemap_elements:
             # Recursively get URLs from each nested sitemaps
             for sitemap in sitemap_elements:
@@ -36,12 +35,12 @@ def get_urls_from_sitemap(sitemap_url):
             # It's a regular sitemap, get all URL locations
             url_locs = sp.find_all("loc")
             urls = [url.text for url in url_locs]
-            
+
     except requests.RequestException as e:
         print(f"Error accessing sitemap {sitemap_url}: {e}")
     except Exception as e:
         print(f"Error processing sitemap {sitemap_url}: {e}")
-        
+
     return urls
 
 
@@ -52,13 +51,13 @@ def check_image_status(img_url):
             img_url, timeout=5, allow_redirects=False, verify=False
         )
         status_code = response.status_code
-        
+
         if status_code == 200:
-            return "OK", f"{status_code}"
+            return "OK", status_code
         elif status_code == 301:
-            return "PROBABLY_OK", f"{status_code}"
+            return "PROBABLY_OK", status_code
         else:
-            return "BROKEN", f"{status_code}"
+            return "BROKEN", status_code
 
     except requests.RequestException:
         return "BROKEN", "Connection failed"
@@ -70,6 +69,7 @@ def check_images_on_page(page_url):
 
     try:
         response = requests.get(page_url, timeout=10, verify=False)
+        response.raise_for_status()
         soup = BeautifulSoup(response.text, "lxml")
         img_tags = soup.find_all("img")
 
@@ -81,22 +81,23 @@ def check_images_on_page(page_url):
                 continue
 
             img_url = urljoin(page_url, img_src)
-            img_alt = img_tag.get("alt", "No alt text")
+            img_alt = img_tag.get("alt", "")
 
             status, http_code = check_image_status(img_url)
 
-            if status == "BROKEN" or status == "PROBABLY_OK":
-                if status == "BROKEN":
-                    print(f"   -> ❌ Broken: {img_url} (Error: {http_code})")
-                else:
-                    print(f"   -> Probably OK (Manual check required): {img_url} (Error: {http_code})")
+            # Only report images that need attention
+            if status in ["BROKEN", "PROBABLY_OK"]:
+                emoji = "❌" if status == "BROKEN" else "⚠️"
+                action = "Broken" if status == "BROKEN" else "Needs Manual Check"
+                print(f"   -> {emoji} {action}: {img_url} (Code: {http_code})")
+
                 results.append(
                     {
                         "page_url": page_url,
                         "image_url": img_url,
                         "image_alt": img_alt,
                         "status": status,
-                        "http_code": http_code,
+                        "http_code": str(http_code),
                         "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 )
@@ -118,11 +119,7 @@ def check_images_on_page(page_url):
 
 
 def save_to_csv(all_results, filename, write_header=True):
-    """Saves all results to a CSV file."""
-    if not all_results:
-        print("No data to save to CSV.")
-        return
-
+    """Saves results to a CSV file."""
     fieldnames = [
         "page_url",
         "image_url",
@@ -137,10 +134,11 @@ def save_to_csv(all_results, filename, write_header=True):
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if write_header:
             writer.writeheader()
-        writer.writerows(all_results)
+            print(f"Report created: {filename}")
 
-    if write_header:
-        print(f"📄 Report created: {filename}")
+        if all_results:
+            writer.writerows(all_results)
+
 
 def append_to_csv(results, filename):
     """Appends new results to existing CSV file."""
@@ -158,39 +156,48 @@ def main():
         return
 
     print(f"Found {len(all_page_urls)} URLs to scan.\n")
-    
-    # Timestamp generation
+
+    # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_filename = f"image_report_{timestamp}.csv"
-    
+
     # Create CSV file with headers
     save_to_csv([], csv_filename, write_header=True)
-    
+
     all_results = []
     total_broken = 0
-    processed_pages = 0
+    total_probably_ok = 0
 
-    for url in all_page_urls:
-        processed_pages += 1
-        print(f"🔎 Scanning page {processed_pages}/{len(all_page_urls)}: {url}")
-        
+    for i, url in enumerate(all_page_urls, 1):
+        print(f"🔎 Scanning page {i}/{len(all_page_urls)}: {url}")
+
         page_results = check_images_on_page(url)
         all_results.extend(page_results)
-        
-        append_to_csv(page_results, csv_filename)
-        
-        broken_count = len([r for r in page_results if r["status"] == "BROKEN"])
-        total_broken += broken_count
-        
-        print(f"   -> Progress: {processed_pages}/{len(all_page_urls)} pages completed")
 
-    print("\n--- Scan Completed ---")
+        # Save results incrementally
+        append_to_csv(page_results, csv_filename)
+
+        # Count issues
+        broken_count = len([r for r in page_results if r["status"] == "BROKEN"])
+        probably_ok_count = len(
+            [r for r in page_results if r["status"] == "PROBABLY_OK"]
+        )
+
+        total_broken += broken_count
+        total_probably_ok += probably_ok_count
+
+        print(f"   -> Progress: {i}/{len(all_page_urls)} pages completed\n")
+
+    # Final summary
+    print("--- Scan Completed ---")
     print(f"Total images analyzed: {len(all_results)}")
-    if total_broken == 0:
-        print("No broken images found.")
+    print(f"Broken images: {total_broken}")
+    print(f" Images needing manual check: {total_probably_ok}")
+
+    if total_broken == 0 and total_probably_ok == 0:
+        print("No issues found!")
     else:
-        print(f"Found {total_broken} broken images.")
-    print(f"Final report saved to: {csv_filename}")
+        print(f"Detailed report saved to: {csv_filename}")
 
 
 if __name__ == "__main__":
