@@ -8,6 +8,14 @@ from datetime import datetime
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Global variable to control output
+QUIET_MODE = False
+
+def print_if_not_quiet(*args, **kwargs):
+    """Print only if not in quiet mode."""
+    if not QUIET_MODE:
+        print(*args, **kwargs)
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -30,6 +38,12 @@ Examples:
         choices=["http", "https"],
         default="https",
         help="Protocol to use (default: https)"
+    )
+    
+    parser.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress console output (only generate CSV report)"
     )
     
     return parser.parse_args()
@@ -77,24 +91,24 @@ def get_urls_from_sitemap(sitemap_url):
                     should_exclude = any(pattern in nested_sitemap_url for pattern in exclude_patterns)
                     
                     if should_include and not should_exclude:
-                        print(f"   -> Processing sitemap: {nested_sitemap_url}")
+                        print_if_not_quiet(f"   -> Processing sitemap: {nested_sitemap_url}")
                         urls.extend(get_urls_from_sitemap(nested_sitemap_url))
                     elif should_exclude:
-                        print(f"   -> Skipping taxonomy/user sitemap: {nested_sitemap_url}")
+                        print_if_not_quiet(f"   -> Skipping taxonomy/user sitemap: {nested_sitemap_url}")
                     else:
                         # If uncertain, process it but warn
-                        print(f"   -> Processing unknown sitemap type: {nested_sitemap_url}")
+                        print_if_not_quiet(f"   -> Processing unknown sitemap type: {nested_sitemap_url}")
                         urls.extend(get_urls_from_sitemap(nested_sitemap_url))
         else:
             # It's a regular sitemap, get all URL locations
             url_locs = sp.find_all("loc")
             urls = [url.text for url in url_locs]
-            print(f"   -> Found {len(urls)} URLs in this sitemap")
+            print_if_not_quiet(f"   -> Found {len(urls)} URLs in this sitemap")
 
     except requests.RequestException as e:
-        print(f"Error accessing sitemap {sitemap_url}: {e}")
+        print_if_not_quiet(f"Error accessing sitemap {sitemap_url}: {e}")
     except Exception as e:
-        print(f"Error processing sitemap {sitemap_url}: {e}")
+        print_if_not_quiet(f"Error processing sitemap {sitemap_url}: {e}")
 
     return urls
 
@@ -157,15 +171,15 @@ def check_images_on_page(page_url):
                 break
         
         if content_area is None:
-            print("   -> ⚠️  No main content area found, scanning entire page")
+            print_if_not_quiet("   -> [WARNING] No main content area found, scanning entire page")
             content_area = soup.find('body') or soup
             used_selector = 'body (fallback)'
         else:
-            print(f"   -> Found main content using selector: {used_selector}")
+            print_if_not_quiet(f"   -> [OK] Found main content using selector: {used_selector}")
         
         # Find images within the content area
         img_tags = content_area.find_all("img")
-        print(f"   -> Found {len(img_tags)} images in main content area")
+        print_if_not_quiet(f"   -> Found {len(img_tags)} images in main content area")
 
         for img_tag in img_tags:
             img_src = img_tag.get("src")
@@ -179,9 +193,9 @@ def check_images_on_page(page_url):
 
             # Only report images that need attention
             if status in ["BROKEN", "PROBABLY_OK"]:
-                emoji = "❌" if status == "BROKEN" else "⚠️"
+                symbol = "[BROKEN]" if status == "BROKEN" else "[WARNING]"
                 action = "Broken" if status == "BROKEN" else "Needs Manual Check"
-                print(f"   -> {emoji} {action}: {img_url} (Code: {http_code})")
+                print_if_not_quiet(f"   -> {symbol} {action}: {img_url} (Code: {http_code})")
 
                 results.append(
                     {
@@ -196,7 +210,7 @@ def check_images_on_page(page_url):
                 )
 
     except requests.RequestException as e:
-        print(f"Could not scan page {page_url}: {e}")
+        print_if_not_quiet(f"Could not scan page {page_url}: {e}")
         results.append(
             {
                 "page_url": page_url,
@@ -229,7 +243,7 @@ def save_to_csv(all_results, filename, write_header=True):
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if write_header:
             writer.writeheader()
-            print(f"Report created: {filename}")
+            print_if_not_quiet(f"Report created: {filename}")
 
         if all_results:
             writer.writerows(all_results)
@@ -243,24 +257,29 @@ def append_to_csv(results, filename):
 
 def main():
     """Main execution logic."""
+    global QUIET_MODE
+    
     # Parse command line arguments
     args = parse_arguments()
+    
+    # Set quiet mode
+    QUIET_MODE = args.quiet
     
     # Set up configuration from arguments
     wp_domain = args.domain
     wp_url = f"{args.protocol}://{wp_domain}"
     sitemap_url = f"{wp_url}/wp-sitemap.xml"
     
-    print(f"Scanning domain: {wp_domain}")
-    print(f"Getting URLs from sitemap: {sitemap_url}")
+    print_if_not_quiet(f"Scanning domain: {wp_domain}")
+    print_if_not_quiet(f"Getting URLs from sitemap: {sitemap_url}")
     
     all_page_urls = get_urls_from_sitemap(sitemap_url)
 
     if not all_page_urls:
-        print("No URLs found. Check the sitemap URL.")
+        print_if_not_quiet("No URLs found. Check the sitemap URL.")
         return
 
-    print(f"Found {len(all_page_urls)} URLs to scan.\n")
+    print_if_not_quiet(f"Found {len(all_page_urls)} URLs to scan.\n")
 
     # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -274,7 +293,7 @@ def main():
     total_probably_ok = 0
 
     for i, url in enumerate(all_page_urls, 1):
-        print(f"🔎 Scanning page {i}/{len(all_page_urls)}: {url}")
+        print_if_not_quiet(f"[SCAN] Scanning page {i}/{len(all_page_urls)}: {url}")
 
         page_results = check_images_on_page(url)
         all_results.extend(page_results)
@@ -291,18 +310,18 @@ def main():
         total_broken += broken_count
         total_probably_ok += probably_ok_count
 
-        print(f"   -> Progress: {i}/{len(all_page_urls)} pages completed\n")
+        print_if_not_quiet(f"   -> Progress: {i}/{len(all_page_urls)} pages completed\n")
 
     # Final summary
-    print("--- Scan Completed ---")
-    print(f"Total images analyzed: {len(all_results)}")
-    print(f"Broken images: {total_broken}")
-    print(f"Images needing manual check: {total_probably_ok}")
+    print_if_not_quiet("--- Scan Completed ---")
+    print_if_not_quiet(f"Total images analyzed: {len(all_results)}")
+    print_if_not_quiet(f"Broken images: {total_broken}")
+    print_if_not_quiet(f"Images needing manual check: {total_probably_ok}")
 
     if total_broken == 0 and total_probably_ok == 0:
-        print("No issues found!")
+        print_if_not_quiet("No issues found!")
     else:
-        print(f"Detailed report saved to: {csv_filename}")
+        print_if_not_quiet(f"Detailed report saved to: {csv_filename}")
 
 
 if __name__ == "__main__":
