@@ -36,28 +36,60 @@ Examples:
 
 
 def get_urls_from_sitemap(sitemap_url):
-    """Gets all page URLs from a WordPress sitemap, including nested sitemaps."""
+    """Gets all page URLs from a WordPress sitemap, focusing only on posts/articles."""
     urls = []
     try:
         r = requests.get(sitemap_url, timeout=10, verify=False)
         r.raise_for_status()
         sp = BeautifulSoup(r.text, "xml")
 
-        # Check if it's a sitemap
+        # Check if it's a sitemap index
         sitemap_elements = sp.find_all("sitemap")
 
         if sitemap_elements:
-            # Recursively get URLs from each nested sitemaps
+            # Filter nested sitemaps to only include posts and pages (not categories, tags, users)
             for sitemap in sitemap_elements:
                 loc_tag = sitemap.find("loc")
                 if loc_tag:
                     nested_sitemap_url = loc_tag.text
-                    print(f"   -> Found nested sitemap: {nested_sitemap_url}")
-                    urls.extend(get_urls_from_sitemap(nested_sitemap_url))
+                    
+                    # WordPress sitemap patterns to include (posts and articles)
+                    include_patterns = [
+                        'wp-sitemap-posts-post-',      # Blog posts/articles
+                        'wp-sitemap-posts-page-',      # Static pages (optional, might contain articles)
+                        'sitemap-posts-',
+                        'sitemap_index.xml',
+                    ]
+                    
+                    # WordPress sitemap patterns to exclude (taxonomies, users, etc.)
+                    exclude_patterns = [
+                        'wp-sitemap-taxonomies-category-',
+                        'wp-sitemap-taxonomies-post_tag-',
+                        'wp-sitemap-taxonomies-',
+                        'wp-sitemap-users-',
+                        'sitemap-categories-',
+                        'sitemap-tags-',
+                        'sitemap-authors-',
+                    ]
+                    
+                    # Check if this sitemap should be included
+                    should_include = any(pattern in nested_sitemap_url for pattern in include_patterns)
+                    should_exclude = any(pattern in nested_sitemap_url for pattern in exclude_patterns)
+                    
+                    if should_include and not should_exclude:
+                        print(f"   -> Processing sitemap: {nested_sitemap_url}")
+                        urls.extend(get_urls_from_sitemap(nested_sitemap_url))
+                    elif should_exclude:
+                        print(f"   -> Skipping taxonomy/user sitemap: {nested_sitemap_url}")
+                    else:
+                        # If uncertain, process it but warn
+                        print(f"   -> Processing unknown sitemap type: {nested_sitemap_url}")
+                        urls.extend(get_urls_from_sitemap(nested_sitemap_url))
         else:
             # It's a regular sitemap, get all URL locations
             url_locs = sp.find_all("loc")
             urls = [url.text for url in url_locs]
+            print(f"   -> Found {len(urls)} URLs in this sitemap")
 
     except requests.RequestException as e:
         print(f"Error accessing sitemap {sitemap_url}: {e}")
@@ -87,16 +119,53 @@ def check_image_status(img_url):
 
 
 def check_images_on_page(page_url):
-    """Finds and checks the status of all images on a given URL."""
+    """Finds and checks the status of all images on a given URL, focusing on main content area."""
     results = []
 
     try:
         response = requests.get(page_url, timeout=10, verify=False)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "lxml")
-        img_tags = soup.find_all("img")
-
-        print(f"   -> Found {len(img_tags)} images on this page")
+        
+        # WordPress main content selectors (ordered by priority)
+        content_selectors = [
+            '#primary',                    # Most common WordPress primary content area
+            '.primary',                    # Class-based primary selector
+            '#content',                    # Alternative content ID
+            '.content-area',              # Common WordPress theme class
+            '.entry-content',             # Post content area
+            '.post-content',              # Alternative post content
+            '.article-content',           # Some themes use article-content
+            'main',                       # HTML5 semantic main element
+            '.main-content',              # Generic main content class
+            '#main',                      # Main ID selector
+            '.site-content',              # WordPress site content wrapper
+            '.hentry',                    # WordPress post entry class
+            'article',                    # HTML5 semantic article element
+            '.post',                      # Generic post class
+            '.content'                    # Generic content class
+        ]
+        
+        # Try to find the main content area
+        content_area = None
+        used_selector = None
+        
+        for selector in content_selectors:
+            content_area = soup.select_one(selector)
+            if content_area:
+                used_selector = selector
+                break
+        
+        if content_area is None:
+            print("   -> ⚠️  No main content area found, scanning entire page")
+            content_area = soup.find('body') or soup
+            used_selector = 'body (fallback)'
+        else:
+            print(f"   -> Found main content using selector: {used_selector}")
+        
+        # Find images within the content area
+        img_tags = content_area.find_all("img")
+        print(f"   -> Found {len(img_tags)} images in main content area")
 
         for img_tag in img_tags:
             img_src = img_tag.get("src")
@@ -122,6 +191,7 @@ def check_images_on_page(page_url):
                         "status": status,
                         "http_code": str(http_code),
                         "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "content_selector": used_selector,
                     }
                 )
 
@@ -135,6 +205,7 @@ def check_images_on_page(page_url):
                 "status": "PAGE_ERROR",
                 "http_code": "N/A",
                 "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "content_selector": "N/A",
             }
         )
 
@@ -149,6 +220,7 @@ def save_to_csv(all_results, filename, write_header=True):
         "image_alt",
         "status",
         "http_code",
+        "content_selector",
         "scan_date",
     ]
 
@@ -225,7 +297,7 @@ def main():
     print("--- Scan Completed ---")
     print(f"Total images analyzed: {len(all_results)}")
     print(f"Broken images: {total_broken}")
-    print(f" Images needing manual check: {total_probably_ok}")
+    print(f"Images needing manual check: {total_probably_ok}")
 
     if total_broken == 0 and total_probably_ok == 0:
         print("No issues found!")
