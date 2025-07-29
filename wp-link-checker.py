@@ -3,13 +3,36 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import urllib3
 import csv
+import argparse
 from datetime import datetime
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Configuration
-WP_URL = ""
-SITEMAP_URL = f"{WP_URL}/wp-sitemap.xml"
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="WordPress Image Link Checker - Scans a WordPress site for broken images",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python wp-link-checker.py example.com
+  python wp-link-checker.py my-blog.wordpress.com
+        """
+    )
+    
+    parser.add_argument(
+        "domain",
+        help="WordPress domain to scan (e.g., example.com)"
+    )
+    
+    parser.add_argument(
+        "--protocol",
+        choices=["http", "https"],
+        default="https",
+        help="Protocol to use (default: https)"
+    )
+    
+    return parser.parse_args()
 
 
 def get_urls_from_sitemap(sitemap_url):
@@ -148,8 +171,18 @@ def append_to_csv(results, filename):
 
 def main():
     """Main execution logic."""
-    print(f"Getting URLs from sitemap: {SITEMAP_URL}")
-    all_page_urls = get_urls_from_sitemap(SITEMAP_URL)
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Set up configuration from arguments
+    wp_domain = args.domain
+    wp_url = f"{args.protocol}://{wp_domain}"
+    sitemap_url = f"{wp_url}/wp-sitemap.xml"
+    
+    print(f"Scanning domain: {wp_domain}")
+    print(f"Getting URLs from sitemap: {sitemap_url}")
+    
+    all_page_urls = get_urls_from_sitemap(sitemap_url)
 
     if not all_page_urls:
         print("No URLs found. Check the sitemap URL.")
@@ -159,7 +192,7 @@ def main():
 
     # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_filename = f"image_report_{timestamp}.csv"
+    csv_filename = f"{wp_domain}_image_report_{timestamp}.csv"
 
     # Create CSV file with headers
     save_to_csv([], csv_filename, write_header=True)

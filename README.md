@@ -62,7 +62,7 @@ pip install -r requirements.txt
 ```
 
 ## 5. Execute script
-Open script and Change `WP_URL` then execute the script.
+
 ```
-python wp-link-checker.py
+python wp-link-checker.py domain-example.com
 ```
